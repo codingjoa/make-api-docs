@@ -1,0 +1,16 @@
+{
+  "name": "make-api-docs",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "axios": "^0.24.0",
+    "json-beautify": "^1.1.1",
+    "query-string": "^7.0.1"
+  }
+}
