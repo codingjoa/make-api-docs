@@ -1,5 +1,6 @@
 const axios = require('axios');
 const accessToken = process.env.ACCESS_TOKEN;
+const DEBUG = false;
 if(accessToken) {
   axios.defaults.headers.common['Authorization'] = `Bearer ${accessToken}`;
 }
@@ -19,8 +20,7 @@ Array.prototype.toString = function toString() {
     return arr;
   }
 }
-//class File {}
-function File() {}
+
 
 class DocsBuilder {
   constructor(method, path, ...contentTypes) {
@@ -28,48 +28,76 @@ class DocsBuilder {
     this.path = path;
     this.params = [];
     this.urlParams = [];
-    this.contentTypes = ['application/json', ...contentTypes];
+    this.contentTypes = contentTypes.length ? contentTypes : ['application/json'];
+    this.testList = [];
+  }
+
+  [Symbol.toPrimitive]() {
+    const args = this.printArguments();
+    return `${args}\n`;
   }
 
   addParameter(info) {
-    if(info.type instanceof Array) {
-      if(/^:.{1,}$/.test(info.name)) {
-        const p = { key: info.name, value: info.example };
-        this.urlParams.push(p);
-      }
-      this.params.push({
-        parameter: info.name,
-        type: info.type.toString(),
-        description: info.description,
-        default: info.default,
-        optional: info.default!==undefined,
-        example: info.example,
-      });
+    if(/^:.{1,}$/.test(info.name)) {
+      //const p = { key: info.name, value: info.example };
+      //this.urlParams.push(p);
+      this.urlParams.push(info.name);
+    }
+    const type = (info.type instanceof Array) ? info.type.toString() : info.type.name;
+    this.params.push({
+      parameter: info.name,
+      type: type,
+      description: info.description,
+      default: info.default,
+      optional: info.default!==undefined,
+      example: info.example,
+    });
+    return this;
+  }
+
+  addTestCase(params) {
+    if(params instanceof Function) {
+      const option = {
+        params: null,
+        setParams(params) {
+          this.params = params;
+        },
+      };
+      params(option);
+      option.params && this.testList.push(option.params);
     } else {
-      if(/^:.{1,}$/.test(info.name)) {
-        const p = { key: info.name, value: info.example };
-        this.urlParams.push(p);
-      }
-      this.params.push({
-        parameter: info.name,
-        type: info.type.name,
-        description: info.description,
-        default: info.default,
-        optional: info.default!==undefined,
-        example: info.example,
-      });
+      this.testList.push(params);
     }
     return this;
   }
 
-  async toString() {
+  async test() {
+    const args = this.printArguments();
+    let cases = null;
+    for(const params of this.testList) {
+      cases = await this.printTastCase(params);
+    }
+
+    return {
+//      payload: res.data,
+      toString() {
+        return (
+`${args}
+${cases}
+`
+        );
+      }
+    };
+  }
+
+  printArguments() {
     let contentTypes = '';
     for(const contentType of this.contentTypes) {
       contentTypes += `<tr>${contentTypes==='' ? `<th colspan="2" rowspan="${this.contentTypes.length}">허용 타입</th>` : ''}<td colspan="3">${contentType}</td></tr>\n`;
     }
     let params = '';
     for(const param of this.params) {
-      params += `<tr><td>${param.parameter}</td><td>${param.type}</td><td>${param.description}</td><td>${param.default ?? ''}</td><td>${param.optional ? '✓' : ''}</td></tr>\n`;
+      params += `<tr><td>${param.parameter}</td><td>${param.type}</td><td>${param.description}</td><td>${param.default ?? '❌'}</td><td>${param.optional ? '✅' : '❌'}</td></tr>\n`;
     }
     return (
 `- ${this.method} ${this.path}
@@ -80,187 +108,74 @@ ${params}</table>
 `);
   }
 
-  async createExample() {
+  async printTastCase(testCase) {
+    const share = this.share;
+    const req = this.createRequest(testCase);
+    const res = await this.createResponse({ ...req, ...share });
+    return {
+      res,
+      [Symbol.toPrimitive]() {
+        return (
+`\`\`\`js
+//request
+${req}
+
+//response
+${res}
+\`\`\``
+        );
+      },
+    }
+  }
+
+  createRequest(datas) {
+    let path = this.path;
+    for(const param of this.urlParams) {
+      path = path.replace(param, datas[param]);
+    }
     const data = {};
     for(const info of this.params) {
-      if(info.example !== undefined && !info.parameter.startsWith(':')) {
-        data[info.parameter] = info.example;
+      if(!info.parameter.startsWith(':')) {
+        if(datas[info.parameter]) {
+          data[info.parameter] = datas[info.parameter];
+        }
       }
     }
-    let path = this.path;
-    for(const qp of this.urlParams) {
-      path = path.replace(qp.key, qp.value);
-    }
-    let pending = null;
-    if(this.method === 'PUT' || this.method === 'POST' || this.method === 'PATCH') {
-      pending = axios({
-        method: this.method,
-        url: new URL(path, HOST).toString(),
-        data
-      });
-    } else {
+    const useBS = this.method === 'PUT' || this.method === 'POST' || this.method === 'PATCH';
+    if(!useBS) {
       const qs = queryString.stringify(data);
-      pending = axios({
-        method: this.method,
-        url: `${new URL(path, HOST).toString()}${!!qs ? `?${qs}`: ''}`,
-      });
+      path = `${new URL(path, HOST).toString()}${!!qs ? `?${qs}`: ''}`;
+    } else {
+      path = new URL(path, HOST).toString();
     }
-    let res = null;
+    console.log(path);
+    const request = beautify(data, null, 2, 100);
+    return {
+      method: this.method,
+      url: path,
+      data,
+      [Symbol.toPrimitive]() {
+        return request;
+      },
+    }
+  }
+
+  async createResponse(req) {
     try {
-      res = await pending;
+      const res = await axios(req);
+      const response = beautify(res.data, null, 3, 100);
+      return {
+        data: res.data,
+        [Symbol.toPrimitive]() {
+          return response;
+        },
+      }
     } catch(err) {
+      DEBUG && console.error(err);
       console.log('E: ' + this.method + ' ' + this.path + ` code: (${err?.response?.status ?? -1})`);
       return '';
     }
-    const request = beautify(data, null, 2, 100);
-    const response = beautify(res.data, null, 3, 100);
-    return `\`\`\`json\n//request\n${request}\n\n//response\n${response}\n\`\`\``;
   }
 }
 
-var getBoardLike = new DocsBuilder('GET', '/api/v1/board/:boardId/like')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 4
-})
-var createBoardLike = new DocsBuilder('PUT', '/api/v1/board/:boardId/like')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 4
-})
-.addParameter({
-  name: 'like',
-  type: Boolean,
-  description: 'true: like, false: dislike',
-  example: true
-});
-var deleteBoardLike = new DocsBuilder('DELETE', '/api/v1/board/:boardId/like')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 4
-});
-
-
-
-var getBoardReply = new DocsBuilder('GET', '/api/v1/board/:boardId/comment')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 4
-});
-var createBoardReply = new DocsBuilder('POST', '/api/v1/board/:boardId/comment')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 4
-})
-.addParameter({
-  name: 'content',
-  type: String,
-  description: '댓글 본문',
-  example: '고양이들 넘 기엽내여~~',
-});
-
-
-
-
-var getUserDetail = new DocsBuilder('GET', '/api/v1/user/:userId')
-.addParameter({
-  name: ':userId',
-  type: Number,
-  description: '사용자 ID',
-  example: 4
-})
-
-
-
-
-var createBoard = new DocsBuilder('POST', '/api/v1/board', 'multipart/form-data')
-.addParameter({
-  name: 'content',
-  type: String,
-  description: '게시글 본문',
-  example: '우리집 개냥이들 넘 귀여어어어~~'
-})
-.addParameter({
-  name: 'hashtags',
-  type: [String],
-  description: '해시태그 목록',
-  default: [],
-  example: ['개냥이', '단또'],
-})
-.addParameter({
-  name: 'images',
-  type: [File],
-  description: '게시글 사진(최대 4개)',
-  default: [],
-})
-
-var getBoard = new DocsBuilder('GET', '/api/v1/board')
-.addParameter({
-  name: 'start',
-  type: Number,
-  description: '검색 시작점',
-  default: 0,
-  example: 2
-})
-.addParameter({
-  name: 'end',
-  type: Number,
-  description: '검색 종료점',
-  default: 15,
-  example: 3
-})
-.addParameter({
-  name: 'keyword',
-  type: Number,
-  description: '사용자 닉네임 또는 해시태그',
-  default: ''
-})
-.addParameter({
-  name: 'userId',
-  type: Number,
-  description: '사용자 ID',
-  default: ''
-});
-
-
-
-var getBoardDetail = new DocsBuilder('GET', '/api/v1/board/:boardId')
-.addParameter({
-  name: ':boardId',
-  type: Number,
-  description: '게시글 번호',
-  example: 21
-});
-
-async function main() {
-  //await getBoard.toString().then(console.log);
-  //await getBoard.createExample().then(console.log);
-  //await getBoardDetail.toString().then(console.log);
-  //await getBoardDetail.createExample().then(console.log);
-  //await getBoardReply.toString().then(console.log);
-  //await getBoardReply.createExample().then(console.log);
-  //await createBoardReply.toString().then(console.log);
-  //await createBoardReply.createExample().then(console.log);
-  //await createBoard.toString().then(console.log);
-  await createBoardLike.toString().then(console.log);
-  await createBoardLike.createExample().then(console.log);
-  await getBoardLike.toString().then(console.log);
-  await getBoardLike.createExample().then(console.log);
-  await deleteBoardLike.toString().then(console.log);
-  await deleteBoardLike.createExample().then(console.log);
-  /*
-  await getUserDetail.toString().then(console.log);
-  await getUserDetail.createExample().then(console.log);
-  */
-}
-main();
+module.exports = DocsBuilder;
