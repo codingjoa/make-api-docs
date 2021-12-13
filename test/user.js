@@ -44,6 +44,12 @@ async function user() {
         type: String,
         description: '사용자 닉네임',
         default: '',
+      })
+      .addParameter({
+        name: 'mysubscribe',
+        type: Number,
+        description: '내가 구독한 사용자만 검색(0 또는 1)',
+        default: '0',
       });
     }
   });
@@ -103,7 +109,7 @@ async function userId() {
   await DocsBundle({
     method: 'GET',
     url: '/api/v1/user/:userId',
-    data: {
+    bind: {
       ':userId': 24,
     },
     baseUrl,
@@ -125,7 +131,7 @@ async function userRelation() {
   await DocsBundle({
     method: 'PUT',
     url: '/api/v1/user/:userId/relation',
-    data: {
+    bind: {
       ':userId': 24,
     },
     baseUrl,
@@ -141,7 +147,7 @@ async function userRelation() {
   await DocsBundle({
     method: 'DELETE',
     url: '/api/v1/user/:userId/relation',
-    data: {
+    bind: {
       ':userId': 24,
     },
     baseUrl,
